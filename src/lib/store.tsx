@@ -1,102 +1,138 @@
-import { createContext, useContext, useMemo, type ReactNode } from "react";
+import { createContext, useContext, useMemo, useCallback, type ReactNode } from "react";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
-import { CATEGORIES, type CategoryId } from "./categories";
-import { CLASSES, getClassSpells } from "./spells";
+import { CLASSES, getClassSpells, type Spell } from "./spells";
 
-export interface Slot {
-  keybind: string;
-  categoryId: CategoryId | null;
+export const ROWS = 2;
+export const COLS = 18;
+
+export const slotKey = (row: number, col: number) => `${row}-${col}`;
+
+// Default keybinds for Blizzard-style bar 1 and bar 2 (bar 2 is "bottom right" or shift-modified).
+const DEFAULT_KEYBINDS: Record<string, string> = (() => {
+  const out: Record<string, string> = {};
+  const row0 = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=", "F1", "F2", "F3", "F4", "F5", "F6"];
+  const row1 = ["S+1", "S+2", "S+3", "S+4", "S+5", "S+6", "Q", "E", "R", "T", "F", "G", "Z", "X", "C", "V", "B", "Y"];
+  row0.forEach((k, i) => (out[slotKey(0, i)] = k));
+  row1.forEach((k, i) => (out[slotKey(1, i)] = k));
+  return out;
+})();
+
+// Per-class/spec spell placement. assignments[classId][specId][slotKey] = spellId
+export type Assignments = Record<string, Record<string, Record<string, string>>>;
+
+export interface CustomSpell extends Spell {
+  source: "custom";
+  spellId?: number;
 }
-
-export interface BarConfig {
-  slots: Slot[];
-}
-
-// assignments[classId][specId][slotIndex] = spellId
-export type Assignments = Record<string, Record<string, Record<number, string>>>;
 
 interface State {
-  bar: BarConfig;
-  setBar: (b: BarConfig) => void;
+  // Global keybind labels (same on every class)
+  keybinds: Record<string, string>;
+  setKeybind: (key: string, value: string) => void;
+  // Per-class/spec slot -> spellId
   assignments: Assignments;
-  assign: (classId: string, specId: string, slotIndex: number, spellId: string | null) => void;
+  placeSpell: (classId: string, specId: string, key: string, spellId: string | null) => void;
+  swapSlots: (classId: string, specId: string, fromKey: string, toKey: string) => void;
+  // User-added spells
+  customSpells: CustomSpell[];
+  addCustomSpell: (s: Omit<CustomSpell, "source">) => void;
+  removeCustomSpell: (id: string) => void;
+  // Class selection
   selectedClassId: string;
   selectedSpecId: string;
   selectClass: (classId: string, specId?: string) => void;
   selectSpec: (specId: string) => void;
+  // Reset current class layout
+  clearCurrentLayout: () => void;
 }
 
 const Ctx = createContext<State | null>(null);
 
-const DEFAULT_KEYBINDS = ["1", "2", "3", "4", "5", "Q", "E", "R", "T", "F", "G", "Z", "X", "C", "V", "Shift+1", "Shift+2", "Shift+3"];
-
-// Default categories ordered to fit the first 12 slots nicely
-const DEFAULT_CATEGORY_ORDER: CategoryId[] = [
-  "defensive",
-  "immunity",
-  "self_heal",
-  "execute",
-  "raid_cd",
-  "major_cd",
-  "burst_cd",
-  "movement",
-  "interrupt",
-  "aoe_dmg",
-  "stun",
-  "cc",
-  "gap_closer",
-  "dispel",
-  "purge",
-  "utility_1",
-  "utility_2",
-  "totem_trinket",
-];
-
-function defaultBar(slotCount = 12): BarConfig {
-  const slots: Slot[] = [];
-  for (let i = 0; i < slotCount; i++) {
-    const catId = DEFAULT_CATEGORY_ORDER[i] ?? null;
-    slots.push({
-      keybind: DEFAULT_KEYBINDS[i] ?? "",
-      categoryId: catId,
-    });
-  }
-  return { slots };
-}
-
 export function StoreProvider({ children }: { children: ReactNode }) {
-  const [bar, setBar] = useLocalStorage<BarConfig>("wowkb:bar", defaultBar(12));
-  const [assignments, setAssignments] = useLocalStorage<Assignments>("wowkb:assignments", {});
-  const [selectedClassId, setSelectedClassId] = useLocalStorage<string>("wowkb:class", "mage");
-  const [selectedSpecId, setSelectedSpecId] = useLocalStorage<string>("wowkb:spec", "frost");
+  const [keybinds, setKeybinds] = useLocalStorage<Record<string, string>>("wowkb:v2:keybinds", DEFAULT_KEYBINDS);
+  const [assignments, setAssignments] = useLocalStorage<Assignments>("wowkb:v2:assignments", {});
+  const [customSpells, setCustomSpells] = useLocalStorage<CustomSpell[]>("wowkb:v2:custom", []);
+  const [selectedClassId, setSelectedClassId] = useLocalStorage<string>("wowkb:v2:class", "mage");
+  const [selectedSpecId, setSelectedSpecId] = useLocalStorage<string>("wowkb:v2:spec", "frost");
+
+  const setKeybind = useCallback((key: string, value: string) => {
+    setKeybinds((prev) => ({ ...prev, [key]: value }));
+  }, [setKeybinds]);
+
+  const placeSpell = useCallback((classId: string, specId: string, key: string, spellId: string | null) => {
+    setAssignments((prev) => {
+      const next = { ...prev };
+      next[classId] = { ...(next[classId] ?? {}) };
+      next[classId][specId] = { ...(next[classId][specId] ?? {}) };
+      if (spellId === null) {
+        delete next[classId][specId][key];
+      } else {
+        next[classId][specId][key] = spellId;
+      }
+      return next;
+    });
+  }, [setAssignments]);
+
+  const swapSlots = useCallback((classId: string, specId: string, fromKey: string, toKey: string) => {
+    if (fromKey === toKey) return;
+    setAssignments((prev) => {
+      const next = { ...prev };
+      next[classId] = { ...(next[classId] ?? {}) };
+      next[classId][specId] = { ...(next[classId][specId] ?? {}) };
+      const map = next[classId][specId];
+      const a = map[fromKey];
+      const b = map[toKey];
+      if (b === undefined) delete map[fromKey]; else map[fromKey] = b;
+      if (a === undefined) delete map[toKey];   else map[toKey] = a;
+      return next;
+    });
+  }, [setAssignments]);
+
+  const addCustomSpell = useCallback((s: Omit<CustomSpell, "source">) => {
+    setCustomSpells((prev) => {
+      if (prev.some((p) => p.id === s.id)) return prev;
+      return [{ ...s, source: "custom" }, ...prev];
+    });
+  }, [setCustomSpells]);
+
+  const removeCustomSpell = useCallback((id: string) => {
+    setCustomSpells((prev) => prev.filter((s) => s.id !== id));
+  }, [setCustomSpells]);
+
+  const selectClass = useCallback((classId: string, specId?: string) => {
+    setSelectedClassId(classId);
+    const cls = CLASSES.find((c) => c.id === classId);
+    setSelectedSpecId(specId ?? cls?.specs[0]?.id ?? "");
+  }, [setSelectedClassId, setSelectedSpecId]);
+
+  const selectSpec = useCallback((specId: string) => setSelectedSpecId(specId), [setSelectedSpecId]);
+
+  const clearCurrentLayout = useCallback(() => {
+    setAssignments((prev) => {
+      const next = { ...prev };
+      if (next[selectedClassId]) {
+        next[selectedClassId] = { ...next[selectedClassId] };
+        delete next[selectedClassId][selectedSpecId];
+      }
+      return next;
+    });
+  }, [setAssignments, selectedClassId, selectedSpecId]);
 
   const value = useMemo<State>(() => ({
-    bar,
-    setBar,
+    keybinds,
+    setKeybind,
     assignments,
-    assign: (classId, specId, slotIndex, spellId) => {
-      setAssignments((prev) => {
-        const next = { ...prev };
-        next[classId] = { ...(next[classId] ?? {}) };
-        next[classId][specId] = { ...(next[classId][specId] ?? {}) };
-        if (spellId === null) {
-          delete next[classId][specId][slotIndex];
-        } else {
-          next[classId][specId][slotIndex] = spellId;
-        }
-        return next;
-      });
-    },
+    placeSpell,
+    swapSlots,
+    customSpells,
+    addCustomSpell,
+    removeCustomSpell,
     selectedClassId,
     selectedSpecId,
-    selectClass: (classId, specId) => {
-      setSelectedClassId(classId);
-      const cls = CLASSES.find((c) => c.id === classId);
-      const newSpec = specId ?? cls?.specs[0]?.id ?? "";
-      setSelectedSpecId(newSpec);
-    },
-    selectSpec: (specId) => setSelectedSpecId(specId),
-  }), [bar, setBar, assignments, setAssignments, selectedClassId, selectedSpecId, setSelectedClassId, setSelectedSpecId]);
+    selectClass,
+    selectSpec,
+    clearCurrentLayout,
+  }), [keybinds, setKeybind, assignments, placeSpell, swapSlots, customSpells, addCustomSpell, removeCustomSpell, selectedClassId, selectedSpecId, selectClass, selectSpec, clearCurrentLayout]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
@@ -107,28 +143,18 @@ export function useStore() {
   return ctx;
 }
 
-// Resolve which spell is shown in a slot for the current class/spec.
-// If user manually assigned: that spell. Otherwise: first spell from class
-// whose categories include the slot's category.
-export function resolveSlotSpell(
+// Resolve a slot's spell for the current class/spec.
+export function resolveSlot(
   classId: string,
   specId: string,
-  slotIndex: number,
-  slot: Slot,
+  key: string,
   assignments: Assignments,
-): { spellId: string | null; isManual: boolean; isAuto: boolean } {
-  const manual = assignments[classId]?.[specId]?.[slotIndex];
-  if (manual) {
-    // Validate that spell still exists for this class
-    const spells = getClassSpells(classId, specId);
-    if (spells.some((s) => s.id === manual)) {
-      return { spellId: manual, isManual: true, isAuto: false };
-    }
-  }
-  if (!slot.categoryId) return { spellId: null, isManual: false, isAuto: false };
-  const spells = getClassSpells(classId, specId);
-  const match = spells.find((s) => s.categories.includes(slot.categoryId!));
-  return { spellId: match?.id ?? null, isManual: false, isAuto: !!match };
+  customSpells: CustomSpell[],
+): Spell | null {
+  const spellId = assignments[classId]?.[specId]?.[key];
+  if (!spellId) return null;
+  const classSpells = getClassSpells(classId, specId);
+  return classSpells.find((s) => s.id === spellId)
+    ?? customSpells.find((s) => s.id === spellId)
+    ?? null;
 }
-
-export { CATEGORIES };
