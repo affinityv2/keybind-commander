@@ -64,7 +64,7 @@ export function SpellLibrary() {
     <div className="wow-panel flex h-full flex-col rounded-lg p-4">
       <div className="mb-3 flex items-center justify-between">
         <h2 className="wow-heading text-lg">Spell library</h2>
-        <AddSpellDialog />
+        <AddSpellDialog onSpellAdded={() => setTab("custom")} />
       </div>
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)} className="mb-3">
@@ -81,14 +81,14 @@ export function SpellLibrary() {
       <Input
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        placeholder="S\u00f8g..."
+        placeholder="Search..."
         className="mb-3 bg-input"
       />
 
       <div className="flex-1 space-y-1 overflow-y-auto pr-1">
         {visible.length === 0 ? (
           <p className="px-2 py-8 text-center text-xs text-muted-foreground">
-            {tab === "custom" ? "Ingen custom spells endnu. Klik 'Add spell' for at importere fra Wowhead eller IdTip." : "Ingen spells matcher."}
+            {tab === "custom" ? "No custom spells yet. Click 'Add spell' to import from Wowhead or IdTip." : "No spells match."}
           </p>
         ) : (
           visible.map((s) => (
@@ -98,7 +98,7 @@ export function SpellLibrary() {
       </div>
 
       <p className="mt-3 border-t border-border/50 pt-2 text-[10px] text-muted-foreground">
-        Tr\u00e6k en spell over p\u00e5 en knap. Hold og tr\u00e6k mellem slots for at flytte. H\u00f8jreklik en knap for keybind / fjern.
+        Drag a spell onto a bar slot. Drag between slots to move. Right-click a slot for keybind / remove.
       </p>
     </div>
   );
@@ -107,7 +107,7 @@ export function SpellLibrary() {
 function LibraryItem({ spell, onRemove }: { spell: LibrarySpell; onRemove?: () => void }) {
   function onDragStart(e: React.DragEvent) {
     e.dataTransfer.setData("application/json", JSON.stringify({ type: "library", spellId: spell.id }));
-    e.dataTransfer.effectAllowed = "copy";
+    e.dataTransfer.effectAllowed = "copyMove";
   }
   return (
     <div
@@ -119,6 +119,7 @@ function LibraryItem({ spell, onRemove }: { spell: LibrarySpell; onRemove?: () =
         src={iconUrl(spell.icon)}
         alt=""
         loading="lazy"
+        draggable={false}
         className="h-8 w-8 flex-none rounded border border-black object-cover"
         onError={(e) => { (e.currentTarget as HTMLImageElement).src = iconUrl("inv_misc_questionmark"); }}
       />
@@ -132,8 +133,8 @@ function LibraryItem({ spell, onRemove }: { spell: LibrarySpell; onRemove?: () =
           variant="ghost"
           className="h-6 w-6 p-0 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:text-destructive"
           onClick={onRemove}
-          title="Fjern"
-        >\u00d7</Button>
+          title="Remove"
+        >×</Button>
       )}
     </div>
   );

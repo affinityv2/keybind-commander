@@ -6,13 +6,23 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { useStore } from "@/lib/store";
+import { useStore, type CustomSpell } from "@/lib/store";
 import { iconUrl } from "@/lib/spells";
 import { fetchWowheadSpell, parseSpellIdInput, type WowheadSpellMeta } from "@/lib/wowhead";
 
-export function AddSpellDialog() {
+interface AddSpellDialogProps {
+  onSpellAdded?: () => void;
+}
+
+export function AddSpellDialog({ onSpellAdded }: AddSpellDialogProps) {
   const { addCustomSpell } = useStore();
   const [open, setOpen] = useState(false);
+
+  function handleAdded(s: Omit<CustomSpell, "source">) {
+    addCustomSpell(s);
+    setOpen(false);
+    onSpellAdded?.();
+  }
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -23,24 +33,24 @@ export function AddSpellDialog() {
       </DialogTrigger>
       <DialogContent className="wow-panel max-w-lg">
         <DialogHeader>
-          <DialogTitle className="wow-heading">Tilf\u00f8j custom spell</DialogTitle>
+          <DialogTitle className="wow-heading">Add custom spell</DialogTitle>
           <DialogDescription>
-            Importer via Wowhead spell ID/URL, eller indtast manuelt (fx fra IdTip ingame).
+            Import via Wowhead spell ID/URL, or enter manually (e.g. from IdTip ingame).
           </DialogDescription>
         </DialogHeader>
 
         <Tabs defaultValue="wowhead">
           <TabsList className="grid w-full grid-cols-2 bg-black/40">
             <TabsTrigger value="wowhead">Wowhead import</TabsTrigger>
-            <TabsTrigger value="manual">Manuelt / IdTip</TabsTrigger>
+            <TabsTrigger value="manual">Manual / IdTip</TabsTrigger>
           </TabsList>
 
           <TabsContent value="wowhead" className="pt-4">
-            <WowheadTab onAdded={(s) => { addCustomSpell(s); setOpen(false); }} />
+            <WowheadTab onAdded={handleAdded} />
           </TabsContent>
 
           <TabsContent value="manual" className="pt-4">
-            <ManualTab onAdded={(s) => { addCustomSpell(s); setOpen(false); }} />
+            <ManualTab onAdded={handleAdded} />
           </TabsContent>
         </Tabs>
       </DialogContent>
@@ -48,7 +58,7 @@ export function AddSpellDialog() {
   );
 }
 
-function WowheadTab({ onAdded }: { onAdded: (s: { id: string; name: string; icon: string; categories: []; spellId?: number }) => void }) {
+function WowheadTab({ onAdded }: { onAdded: (s: Omit<CustomSpell, "source">) => void }) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -58,12 +68,12 @@ function WowheadTab({ onAdded }: { onAdded: (s: { id: string; name: string; icon
     setError(null);
     setPreview(null);
     const id = parseSpellIdInput(input);
-    if (!id) { setError("Indtast et spell ID eller Wowhead URL (fx https://www.wowhead.com/spell=45438)"); return; }
+    if (!id) { setError("Enter a spell ID or Wowhead URL (e.g. https://www.wowhead.com/spell=45438)"); return; }
     setLoading(true);
     const meta = await fetchWowheadSpell(id);
     setLoading(false);
     if (!meta) {
-      setError("Kunne ikke hente fra Wowhead (CORS eller spell ikke fundet). Brug 'Manuelt' fanen i stedet.");
+      setError("Could not fetch from Wowhead. Use the 'Manual' tab instead.");
       return;
     }
     setPreview(meta);
@@ -88,10 +98,10 @@ function WowheadTab({ onAdded }: { onAdded: (s: { id: string; name: string; icon
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") load(); }}
-          placeholder="Spell ID eller Wowhead URL"
+          placeholder="Spell ID or Wowhead URL"
           className="bg-input"
         />
-        <Button onClick={load} disabled={loading}>{loading ? "Henter..." : "Hent"}</Button>
+        <Button onClick={load} disabled={loading}>{loading ? "Fetching..." : "Fetch"}</Button>
       </div>
       {error && <p className="text-xs text-destructive">{error}</p>}
       {preview && (
@@ -99,24 +109,23 @@ function WowheadTab({ onAdded }: { onAdded: (s: { id: string; name: string; icon
           <img src={iconUrl(preview.icon)} alt="" className="h-12 w-12 rounded border border-black object-cover" />
           <div className="flex-1">
             <div className="font-semibold">{preview.name}</div>
-            <div className="text-xs text-muted-foreground">ID {preview.spellId} \u00b7 {preview.icon}</div>
+            <div className="text-xs text-muted-foreground">ID {preview.spellId} &middot; {preview.icon}</div>
           </div>
-          <Button onClick={confirm} className="bg-[var(--gold)] text-[var(--primary-foreground)] hover:bg-[var(--gold)]/90">Tilf\u00f8j</Button>
+          <Button onClick={confirm} className="bg-[var(--gold)] text-[var(--primary-foreground)] hover:bg-[var(--gold)]/90">Add</Button>
         </div>
       )}
       <p className="text-[11px] text-muted-foreground">
-        Tip: hvis Wowhead blokerer requests fra browseren, brug 'Manuelt' \u2014 du har allerede icon-navnet fra IdTip.
+        Tip: If Wowhead blocks browser requests, use 'Manual' &mdash; you already have the icon name from IdTip.
       </p>
     </div>
   );
 }
 
-function ManualTab({ onAdded }: { onAdded: (s: { id: string; name: string; icon: string; categories: []; spellId?: number }) => void }) {
+function ManualTab({ onAdded }: { onAdded: (s: Omit<CustomSpell, "source">) => void }) {
   const [name, setName] = useState("");
   const [icon, setIcon] = useState("");
   const [spellId, setSpellId] = useState("");
 
-  // Strip common prefixes / extensions users may paste from texture paths
   function normalizeIcon(raw: string) {
     return raw
       .trim()
@@ -147,14 +156,14 @@ function ManualTab({ onAdded }: { onAdded: (s: { id: string; name: string; icon:
   return (
     <div className="space-y-3">
       <div>
-        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">Spell navn</label>
-        <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="fx Ice Block" className="bg-input" />
+        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">Spell name</label>
+        <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Ice Block" className="bg-input" />
       </div>
       <div>
-        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">Icon (fra IdTip)</label>
-        <Input value={icon} onChange={(e) => setIcon(e.target.value)} placeholder="fx spell_frost_frost" className="bg-input font-mono text-sm" />
+        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">Icon (from IdTip)</label>
+        <Input value={icon} onChange={(e) => setIcon(e.target.value)} placeholder="e.g. spell_frost_frost" className="bg-input font-mono text-sm" />
         <p className="mt-1 text-[10px] text-muted-foreground">
-          IdTip viser texture-path som <code className="text-[var(--gold)]">Interface\\ICONS\\spell_frost_frost</code>. Paste hele linjen \u2014 vi rydder den op.
+          IdTip shows texture path like <code className="text-[var(--gold)]">Interface\ICONS\spell_frost_frost</code>. Paste the whole line &mdash; we clean it up.
         </p>
         {normalized && (
           <div className="mt-2 flex items-center gap-2 text-xs">
@@ -164,12 +173,12 @@ function ManualTab({ onAdded }: { onAdded: (s: { id: string; name: string; icon:
         )}
       </div>
       <div>
-        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">Spell ID (valgfrit)</label>
-        <Input value={spellId} onChange={(e) => setSpellId(e.target.value)} placeholder="fx 45438" className="bg-input" />
+        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">Spell ID (optional)</label>
+        <Input value={spellId} onChange={(e) => setSpellId(e.target.value)} placeholder="e.g. 45438" className="bg-input" />
       </div>
       <DialogFooter>
         <Button disabled={!valid} onClick={save} className="bg-[var(--gold)] text-[var(--primary-foreground)] hover:bg-[var(--gold)]/90">
-          Tilf\u00f8j spell
+          Add spell
         </Button>
       </DialogFooter>
     </div>

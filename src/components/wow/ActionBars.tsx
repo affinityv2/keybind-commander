@@ -15,13 +15,13 @@ export function ActionBars() {
         <div>
           <h2 className="wow-heading text-2xl">Action Bars</h2>
           <p className="text-xs text-muted-foreground">
-            2 bars \u00d7 18 slots \u2014 tr\u00e6k fra library, eller mellem slots for at flytte. H\u00f8jreklik for keybind.
+            2 bars &times; 18 slots &mdash; drag from library, or between slots to move. Right-click for keybind.
           </p>
         </div>
         <BarLegend />
       </div>
 
-      <div className="space-y-3">
+      <div className="space-y-3 overflow-x-auto">
         {Array.from({ length: ROWS }).map((_, row) => (
           <BarRow key={row} row={row} />
         ))}
@@ -35,9 +35,9 @@ function BarLegend() {
   return (
     <div className="flex items-center gap-2 text-xs text-muted-foreground">
       <Button size="sm" variant="ghost" className="h-7 text-xs text-muted-foreground hover:text-destructive" onClick={() => {
-        if (confirm("Ryd alle spells p\u00e5 denne class/spec? (Keybinds bevares)")) clearCurrentLayout();
+        if (confirm("Clear all spells for this class/spec? (Keybinds are kept)")) clearCurrentLayout();
       }}>
-        Ryd layout
+        Clear layout
       </Button>
     </div>
   );
@@ -46,8 +46,8 @@ function BarLegend() {
 function BarRow({ row }: { row: number }) {
   return (
     <div className="flex items-center gap-2">
-      <span className="w-12 text-right font-mono text-[10px] uppercase tracking-wider text-[var(--gold-dim)]">Bar {row + 1}</span>
-      <div className="flex flex-wrap gap-1.5">
+      <span className="w-10 shrink-0 text-right font-mono text-[10px] uppercase tracking-wider text-[var(--gold-dim)]">Bar {row + 1}</span>
+      <div className="grid grid-cols-18 gap-1">
         {Array.from({ length: COLS }).map((_, col) => (
           <Slot key={col} row={row} col={col} />
         ))}
@@ -77,7 +77,8 @@ function Slot({ row, col }: { row: number; col: number }) {
   }
   function onDragOver(e: React.DragEvent) {
     e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
+    const effect = e.dataTransfer.effectAllowed;
+    e.dataTransfer.dropEffect = effect === "copy" || effect === "copyMove" ? "copy" : "move";
     setDragOver(true);
   }
   function onDragLeave() { setDragOver(false); }
@@ -115,8 +116,8 @@ function Slot({ row, col }: { row: number; col: number }) {
             onDragOver={onDragOver}
             onDragLeave={onDragLeave}
             onDrop={onDrop}
-            className={`wow-slot relative flex h-14 w-14 items-center justify-center overflow-hidden rounded ${spell ? "cursor-grab active:cursor-grabbing" : "wow-slot-empty"} ${dragOver ? "ring-2 ring-[var(--gold)]" : ""}`}
-            title={spell ? spell.name : "Tom slot"}
+            className={`wow-slot relative flex h-10 w-10 items-center justify-center overflow-hidden rounded ${spell ? "cursor-grab active:cursor-grabbing" : "wow-slot-empty"} ${dragOver ? "ring-2 ring-[var(--gold)]" : ""}`}
+            title={spell ? spell.name : "Empty slot"}
           >
             {spell ? (
               <img
@@ -128,10 +129,10 @@ function Slot({ row, col }: { row: number; col: number }) {
                 onError={(e) => { (e.currentTarget as HTMLImageElement).src = iconUrl("inv_misc_questionmark"); }}
               />
             ) : (
-              <span className="text-xl text-muted-foreground/30">+</span>
+              <span className="text-sm text-muted-foreground/30">+</span>
             )}
             {keybind && (
-              <span className="pointer-events-none absolute right-0.5 top-0.5 rounded bg-black/85 px-1 text-[10px] font-bold leading-tight text-[var(--gold)] shadow">
+              <span className="pointer-events-none absolute right-0 top-0 rounded bg-black/85 px-0.5 text-[8px] font-bold leading-tight text-[var(--gold)] shadow">
                 {keybind}
               </span>
             )}
@@ -140,7 +141,7 @@ function Slot({ row, col }: { row: number; col: number }) {
 
         <ContextMenuContent className="wow-panel min-w-48">
           <ContextMenuLabel className="text-[var(--gold)]">
-            Slot {row + 1}.{col + 1}{keybind && ` \u00b7 ${keybind}`}
+            Slot {row + 1}.{col + 1}{keybind && ` · ${keybind}`}
           </ContextMenuLabel>
           {spell && (
             <ContextMenuLabel className="text-xs font-normal text-muted-foreground">
@@ -149,18 +150,18 @@ function Slot({ row, col }: { row: number; col: number }) {
           )}
           <ContextMenuSeparator />
           <ContextMenuItem onSelect={openKeybind}>
-            S\u00e6t keybind\u2026
+            Set keybind...
           </ContextMenuItem>
           {spell && (
             <ContextMenuItem
               className="text-destructive focus:text-destructive"
               onSelect={() => placeSpell(selectedClassId, selectedSpecId, key, null)}
             >
-              Fjern spell
+              Remove spell
             </ContextMenuItem>
           )}
           <ContextMenuItem onSelect={() => setKeybind(key, "")}>
-            Fjern keybind
+            Remove keybind
           </ContextMenuItem>
           <ContextMenuSeparator />
           <CopyToAllClassesItem fromKey={key} spellName={spell?.name} />
@@ -181,11 +182,11 @@ function Slot({ row, col }: { row: number; col: number }) {
             className="bg-input"
           />
           <p className="text-[11px] text-muted-foreground">
-            Skriv tasten som du vil se den (vi binder ikke noget rigtigt \u2014 dette er en planner).
+            Type the key as you want to see it (this is a planner — no real bindings).
           </p>
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setKeybindOpen(false)}>Annull\u00e9r</Button>
-            <Button onClick={saveKeybind} className="bg-[var(--gold)] text-[var(--primary-foreground)] hover:bg-[var(--gold)]/90">Gem</Button>
+            <Button variant="ghost" onClick={() => setKeybindOpen(false)}>Cancel</Button>
+            <Button onClick={saveKeybind} className="bg-[var(--gold)] text-[var(--primary-foreground)] hover:bg-[var(--gold)]/90">Save</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

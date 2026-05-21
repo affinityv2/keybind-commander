@@ -46,7 +46,7 @@ export function ClassPicker() {
       </div>
 
       <div className="mt-4 rounded border border-border bg-black/30 p-2 text-xs text-muted-foreground">
-        Aktiv: <span className="font-semibold" style={{ color: cls.color }}>{cls.name}</span> — {cls.specs.find(s => s.id === selectedSpecId)?.name}
+        Active: <span className="font-semibold" style={{ color: cls.color }}>{cls.name}</span> &mdash; {cls.specs.find(s => s.id === selectedSpecId)?.name}
       </div>
     </div>
   );
