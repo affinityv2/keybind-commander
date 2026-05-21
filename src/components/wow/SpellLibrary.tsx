@@ -1,0 +1,140 @@
+import { useMemo, useState } from "react";
+import { CLASSES, getClassSpells, iconUrl, type Spell } from "@/lib/spells";
+import { useStore } from "@/lib/store";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { AddSpellDialog } from "./AddSpellDialog";
+
+interface LibrarySpell extends Spell {
+  source: string; // class name or "Custom"
+  sourceColor: string;
+}
+
+export function SpellLibrary() {
+  const { customSpells, removeCustomSpell, selectedClassId, selectedSpecId } = useStore();
+  const [query, setQuery] = useState("");
+  const [tab, setTab] = useState<"class" | "all" | "custom">("class");
+
+  const allSpells = useMemo<LibrarySpell[]>(() => {
+    const out: LibrarySpell[] = [];
+    const seen = new Set<string>();
+    for (const cls of CLASSES) {
+      for (const sp of cls.shared) {
+        if (seen.has(sp.id)) continue;
+        seen.add(sp.id);
+        out.push({ ...sp, source: cls.name, sourceColor: cls.color });
+      }
+      for (const spec of cls.specs) {
+        for (const sp of spec.spells) {
+          if (seen.has(sp.id)) continue;
+          seen.add(sp.id);
+          out.push({ ...sp, source: `${cls.name} (${spec.name})`, sourceColor: cls.color });
+        }
+      }
+    }
+    return out;
+  }, []);
+
+  const classSpells = useMemo<LibrarySpell[]>(() => {
+    const cls = CLASSES.find((c) => c.id === selectedClassId);
+    if (!cls) return [];
+    const color = cls.color;
+    const list: LibrarySpell[] = cls.shared.map((s) => ({ ...s, source: cls.name, sourceColor: color }));
+    const specSpells = getClassSpells(selectedClassId, selectedSpecId).filter((s) => !cls.shared.some((sh) => sh.id === s.id));
+    for (const s of specSpells) {
+      list.push({ ...s, source: `${cls.name} spec`, sourceColor: color });
+    }
+    return list;
+  }, [selectedClassId, selectedSpecId]);
+
+  const customList = useMemo<LibrarySpell[]>(
+    () => customSpells.map((s) => ({ ...s, source: "Custom", sourceColor: "#d4a04c" })),
+    [customSpells],
+  );
+
+  const visible = useMemo(() => {
+    const base = tab === "class" ? classSpells : tab === "all" ? allSpells : customList;
+    const q = query.trim().toLowerCase();
+    if (!q) return base;
+    return base.filter((s) => s.name.toLowerCase().includes(q) || s.source.toLowerCase().includes(q));
+  }, [tab, classSpells, allSpells, customList, query]);
+
+  return (
+    <div className="wow-panel flex h-full flex-col rounded-lg p-4">
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="wow-heading text-lg">Spell library</h2>
+        <AddSpellDialog />
+      </div>
+
+      <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)} className="mb-3">
+        <TabsList className="grid w-full grid-cols-3 bg-black/40">
+          <TabsTrigger value="class">Class</TabsTrigger>
+          <TabsTrigger value="all">All</TabsTrigger>
+          <TabsTrigger value="custom">Custom</TabsTrigger>
+        </TabsList>
+        <TabsContent value="class" />
+        <TabsContent value="all" />
+        <TabsContent value="custom" />
+      </Tabs>
+
+      <Input
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="S\u00f8g..."
+        className="mb-3 bg-input"
+      />
+
+      <div className="flex-1 space-y-1 overflow-y-auto pr-1">
+        {visible.length === 0 ? (
+          <p className="px-2 py-8 text-center text-xs text-muted-foreground">
+            {tab === "custom" ? "Ingen custom spells endnu. Klik 'Add spell' for at importere fra Wowhead eller IdTip." : "Ingen spells matcher."}
+          </p>
+        ) : (
+          visible.map((s) => (
+            <LibraryItem key={s.id} spell={s} onRemove={tab === "custom" ? () => removeCustomSpell(s.id) : undefined} />
+          ))
+        )}
+      </div>
+
+      <p className="mt-3 border-t border-border/50 pt-2 text-[10px] text-muted-foreground">
+        Tr\u00e6k en spell over p\u00e5 en knap. Hold og tr\u00e6k mellem slots for at flytte. H\u00f8jreklik en knap for keybind / fjern.
+      </p>
+    </div>
+  );
+}
+
+function LibraryItem({ spell, onRemove }: { spell: LibrarySpell; onRemove?: () => void }) {
+  function onDragStart(e: React.DragEvent) {
+    e.dataTransfer.setData("application/json", JSON.stringify({ type: "library", spellId: spell.id }));
+    e.dataTransfer.effectAllowed = "copy";
+  }
+  return (
+    <div
+      draggable
+      onDragStart={onDragStart}
+      className="group flex cursor-grab items-center gap-2 rounded border border-border/60 bg-black/30 p-1.5 transition hover:border-[var(--gold-dim)] hover:bg-black/50 active:cursor-grabbing"
+    >
+      <img
+        src={iconUrl(spell.icon)}
+        alt=""
+        loading="lazy"
+        className="h-8 w-8 flex-none rounded border border-black object-cover"
+        onError={(e) => { (e.currentTarget as HTMLImageElement).src = iconUrl("inv_misc_questionmark"); }}
+      />
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-xs font-semibold">{spell.name}</div>
+        <div className="truncate text-[10px]" style={{ color: spell.sourceColor }}>{spell.source}</div>
+      </div>
+      {onRemove && (
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-6 w-6 p-0 text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:text-destructive"
+          onClick={onRemove}
+          title="Fjern"
+        >\u00d7</Button>
+      )}
+    </div>
+  );
+}
