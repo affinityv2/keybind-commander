@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ROWS, COLS, slotKey, useStore, resolveSlot } from "@/lib/store";
 import { iconUrl, CLASSES, getClassSpells } from "@/lib/spells";
+import { fetchWowheadSpell, parseSpellIdInput } from "@/lib/wowhead";
 
 export function ActionBars() {
   return (
@@ -60,15 +61,19 @@ function Slot({ row, col }: { row: number; col: number }) {
   const key = slotKey(row, col);
   const {
     keybinds, setKeybind, assignments, customSpells, placeSpell, swapSlots,
-    selectedClassId, selectedSpecId,
+    selectedClassId, selectedSpecId, iconOverrides, setIconOverride,
   } = useStore();
 
-  const spell = resolveSlot(selectedClassId, selectedSpecId, key, assignments, customSpells);
+  const spell = resolveSlot(selectedClassId, selectedSpecId, key, assignments, customSpells, iconOverrides);
   const keybind = keybinds[key] ?? "";
 
   const [dragOver, setDragOver] = useState(false);
   const [keybindOpen, setKeybindOpen] = useState(false);
   const [draftKey, setDraftKey] = useState(keybind);
+  const [iconEditOpen, setIconEditOpen] = useState(false);
+  const [iconDraft, setIconDraft] = useState("");
+  const [iconLoading, setIconLoading] = useState(false);
+  const [iconError, setIconError] = useState<string | null>(null);
 
   function onDragStart(e: React.DragEvent) {
     if (!spell) { e.preventDefault(); return; }
@@ -106,6 +111,51 @@ function Slot({ row, col }: { row: number; col: number }) {
     setKeybindOpen(false);
   }
 
+  function openIconEdit() {
+    setIconDraft("");
+    setIconError(null);
+    setIconEditOpen(true);
+  }
+
+  async function fetchAndSetIcon() {
+    if (!spell) return;
+    setIconError(null);
+    const input = iconDraft.trim();
+    if (!input) { setIconError("Enter an icon name or Wowhead spell ID"); return; }
+
+    const wowId = parseSpellIdInput(input);
+    if (wowId) {
+      setIconLoading(true);
+      const meta = await fetchWowheadSpell(wowId);
+      setIconLoading(false);
+      if (meta) {
+        setIconOverride(spell.id, meta.icon);
+        setIconEditOpen(false);
+        return;
+      }
+      setIconError("Could not fetch icon from Wowhead. Try entering the icon name directly.");
+      return;
+    }
+
+    const normalized = input
+      .replace(/^Interface\\ICONS\\/i, "")
+      .replace(/^Interface\/ICONS\//i, "")
+      .replace(/\.(blp|tga|png|jpg)$/i, "")
+      .replace(/\\/g, "/")
+      .toLowerCase();
+
+    if (normalized) {
+      setIconOverride(spell.id, normalized);
+      setIconEditOpen(false);
+    }
+  }
+
+  function resetIcon() {
+    if (!spell) return;
+    setIconOverride(spell.id, null);
+    setIconEditOpen(false);
+  }
+
   return (
     <>
       <ContextMenu>
@@ -141,7 +191,7 @@ function Slot({ row, col }: { row: number; col: number }) {
 
         <ContextMenuContent className="wow-panel min-w-48">
           <ContextMenuLabel className="text-[var(--gold)]">
-            Slot {row + 1}.{col + 1}{keybind && ` · ${keybind}`}
+            Slot {row + 1}.{col + 1}{keybind && ` \u00B7 ${keybind}`}
           </ContextMenuLabel>
           {spell && (
             <ContextMenuLabel className="text-xs font-normal text-muted-foreground">
@@ -153,18 +203,21 @@ function Slot({ row, col }: { row: number; col: number }) {
             Set keybind...
           </ContextMenuItem>
           {spell && (
-            <ContextMenuItem
-              className="text-destructive focus:text-destructive"
-              onSelect={() => placeSpell(selectedClassId, selectedSpecId, key, null)}
-            >
-              Remove spell
-            </ContextMenuItem>
+            <>
+              <ContextMenuItem onSelect={openIconEdit}>
+                Edit icon...
+              </ContextMenuItem>
+              <ContextMenuItem
+                className="text-destructive focus:text-destructive"
+                onSelect={() => placeSpell(selectedClassId, selectedSpecId, key, null)}
+              >
+                Remove spell
+              </ContextMenuItem>
+            </>
           )}
           <ContextMenuItem onSelect={() => setKeybind(key, "")}>
             Remove keybind
           </ContextMenuItem>
-          <ContextMenuSeparator />
-          <CopyToAllClassesItem fromKey={key} spellName={spell?.name} />
         </ContextMenuContent>
       </ContextMenu>
 
@@ -190,12 +243,54 @@ function Slot({ row, col }: { row: number; col: number }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {spell && (
+        <Dialog open={iconEditOpen} onOpenChange={setIconEditOpen}>
+          <DialogContent className="wow-panel max-w-sm">
+            <DialogHeader>
+              <DialogTitle className="wow-heading">Edit icon: {spell.name}</DialogTitle>
+            </DialogHeader>
+            <div className="flex items-center gap-3 mb-3">
+              <img src={iconUrl(spell.icon)} alt="" className="h-12 w-12 rounded border border-black object-cover" />
+              <div className="text-xs text-muted-foreground">
+                Current: <span className="font-mono text-[var(--gold)]">{spell.icon}</span>
+              </div>
+            </div>
+            <Input
+              autoFocus
+              value={iconDraft}
+              onChange={(e) => setIconDraft(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") fetchAndSetIcon(); }}
+              placeholder="Wowhead spell ID or icon name"
+              className="bg-input font-mono text-sm"
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Enter a <strong>Wowhead spell ID</strong> (e.g. 45438) to auto-fetch the icon, or paste an <strong>icon name</strong> directly (e.g. spell_frost_frost).
+            </p>
+            {iconError && <p className="text-xs text-destructive">{iconError}</p>}
+            {iconDraft.trim() && !/^\d+$/.test(iconDraft.trim()) && !parseSpellIdInput(iconDraft) && (
+              <div className="flex items-center gap-2 text-xs">
+                <img
+                  src={iconUrl(iconDraft.trim().replace(/^Interface\\ICONS\\/i, "").replace(/\.(blp|tga|png|jpg)$/i, "").replace(/\\/g, "/").toLowerCase())}
+                  alt=""
+                  className="h-8 w-8 rounded border border-black"
+                  onError={(e) => { (e.currentTarget as HTMLImageElement).style.opacity = "0.3"; }}
+                />
+                <span className="text-muted-foreground">Preview</span>
+              </div>
+            )}
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setIconEditOpen(false)}>Cancel</Button>
+              {iconOverrides[spell.id] && (
+                <Button variant="ghost" onClick={resetIcon} className="text-muted-foreground hover:text-destructive">Reset to default</Button>
+              )}
+              <Button onClick={fetchAndSetIcon} disabled={iconLoading} className="bg-[var(--gold)] text-[var(--primary-foreground)] hover:bg-[var(--gold)]/90">
+                {iconLoading ? "Fetching..." : "Set icon"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </>
   );
-}
-
-// Optional helper: tag spells with shared `id` across classes? Out of scope here.
-function CopyToAllClassesItem({ fromKey }: { fromKey: string; spellName?: string }) {
-  void fromKey;
-  return null;
 }

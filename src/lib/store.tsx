@@ -25,6 +25,17 @@ export interface CustomSpell extends Spell {
   spellId?: number;
 }
 
+export interface Profile {
+  id: string;
+  name: string;
+  assignments: Assignments;
+  keybinds: Record<string, string>;
+  customSpells: CustomSpell[];
+  selectedClassId: string;
+  selectedSpecId: string;
+  iconOverrides: Record<string, string>;
+}
+
 interface State {
   keybinds: Record<string, string>;
   setKeybind: (key: string, value: string) => void;
@@ -44,42 +55,91 @@ interface State {
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
   signUp: (email: string, password: string) => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
+  // Profiles
+  profiles: Profile[];
+  activeProfileId: string;
+  addProfile: (name: string) => void;
+  renameProfile: (id: string, name: string) => void;
+  deleteProfile: (id: string) => void;
+  switchProfile: (id: string) => void;
+  exportProfile: () => string;
+  importProfile: (code: string) => boolean;
+  // Icon overrides
+  iconOverrides: Record<string, string>;
+  setIconOverride: (spellId: string, icon: string | null) => void;
 }
 
 const Ctx = createContext<State | null>(null);
 
+function makeDefaultProfile(): Profile {
+  return {
+    id: "default",
+    name: "Default",
+    assignments: {},
+    keybinds: DEFAULT_KEYBINDS,
+    customSpells: [],
+    selectedClassId: "mage",
+    selectedSpecId: "frost",
+    iconOverrides: {},
+  };
+}
+
 export function StoreProvider({ children }: { children: ReactNode }) {
-  const [keybinds, setKeybinds] = useLocalStorage<Record<string, string>>("wowkb:v2:keybinds", DEFAULT_KEYBINDS);
-  const [assignments, setAssignments] = useLocalStorage<Assignments>("wowkb:v2:assignments", {});
-  const [customSpells, setCustomSpells] = useLocalStorage<CustomSpell[]>("wowkb:v2:custom", []);
-  const [selectedClassId, setSelectedClassId] = useLocalStorage<string>("wowkb:v2:class", "mage");
-  const [selectedSpecId, setSelectedSpecId] = useLocalStorage<string>("wowkb:v2:spec", "frost");
+  const [profiles, setProfiles] = useLocalStorage<Profile[]>("wowkb:v3:profiles", [makeDefaultProfile()]);
+  const [activeProfileId, setActiveProfileId] = useLocalStorage<string>("wowkb:v3:activeProfile", "default");
+
+  const activeProfile = profiles.find((p) => p.id === activeProfileId) ?? profiles[0] ?? makeDefaultProfile();
+
+  // Derive state from active profile
+  const [assignments, setAssignments] = useState<Assignments>(activeProfile.assignments);
+  const [keybinds, setKeybinds] = useState<Record<string, string>>(activeProfile.keybinds);
+  const [customSpells, setCustomSpells] = useState<CustomSpell[]>(activeProfile.customSpells);
+  const [selectedClassId, setSelectedClassId] = useState<string>(activeProfile.selectedClassId);
+  const [selectedSpecId, setSelectedSpecId] = useState<string>(activeProfile.selectedSpecId);
+  const [iconOverrides, setIconOverrides] = useState<Record<string, string>>(activeProfile.iconOverrides ?? {});
+
+  // Sync profile -> state when switching profiles
+  useEffect(() => {
+    const p = profiles.find((pr) => pr.id === activeProfileId) ?? profiles[0];
+    if (!p) return;
+    setAssignments(p.assignments);
+    setKeybinds(p.keybinds);
+    setCustomSpells(p.customSpells);
+    setSelectedClassId(p.selectedClassId);
+    setSelectedSpecId(p.selectedSpecId);
+    setIconOverrides(p.iconOverrides ?? {});
+  }, [activeProfileId, profiles]);
+
+  // Save state back to profile on every change
+  const saveToProfile = useCallback(() => {
+    setProfiles((prev) =>
+      prev.map((p) =>
+        p.id === activeProfileId
+          ? { ...p, assignments, keybinds, customSpells, selectedClassId, selectedSpecId, iconOverrides }
+          : p,
+      ),
+    );
+  }, [activeProfileId, assignments, keybinds, customSpells, selectedClassId, selectedSpecId, iconOverrides, setProfiles]);
+
+  useEffect(() => { saveToProfile(); }, [saveToProfile]);
 
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
 
-  // Helper: get auth header for Supabase REST calls
   const getAuthHeader = useCallback((): Record<string, string> => {
-    // Access the session from the supabase module's internal state
-    // We store the token in localStorage, so read it from there
     try {
       const raw = localStorage.getItem("sb-auth-session");
       if (raw) {
         const session = JSON.parse(raw);
-        if (session?.access_token) {
-          return { Authorization: `Bearer ${session.access_token}` };
-        }
+        if (session?.access_token) return { Authorization: `Bearer ${session.access_token}` };
       }
     } catch { /* ignore */ }
     return {};
   }, []);
 
-  // Load data from Supabase for the current user
   const loadFromSupabase = useCallback(async (userId: string) => {
     try {
       const authHeader = getAuthHeader();
-
-      // Load profile
       const profileRes = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/profiles?select=selected_class,selected_spec&id=eq.${userId}&limit=1`,
         { headers: { apikey: import.meta.env.VITE_SUPABASE_ANON_KEY, ...authHeader } },
@@ -91,8 +151,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           setSelectedSpecId(profileData[0].selected_spec);
         }
       }
-
-      // Load keybinds
       const kbRes = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/keybinds?select=slot_key,label&user_id=eq.${userId}`,
         { headers: { apikey: import.meta.env.VITE_SUPABASE_ANON_KEY, ...authHeader } },
@@ -105,8 +163,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           setKeybinds(kbMap);
         }
       }
-
-      // Load assignments
       const aRes = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/assignments?select=class_id,spec_id,slot_key,spell_id&user_id=eq.${userId}`,
         { headers: { apikey: import.meta.env.VITE_SUPABASE_ANON_KEY, ...authHeader } },
@@ -123,8 +179,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           setAssignments(aMap);
         }
       }
-
-      // Load custom spells
       const csRes = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/custom_spells?select=spell_id,name,icon,categories,wowhead_spell_id&user_id=eq.${userId}`,
         { headers: { apikey: import.meta.env.VITE_SUPABASE_ANON_KEY, ...authHeader } },
@@ -146,9 +200,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     } catch {
       // Silently fall back to localStorage data
     }
-  }, [setKeybinds, setAssignments, setCustomSpells, setSelectedClassId, setSelectedSpecId, getAuthHeader]);
+  }, [getAuthHeader]);
 
-  // Auth state listener
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
@@ -157,36 +210,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
       setAuthLoading(false);
     });
-
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event: string, session: Session | null) => {
         (async () => {
           if (session?.user) {
             setUser(session.user);
-            if (event === "SIGNED_IN") {
-              await loadFromSupabase(session.user.id);
-            }
+            if (event === "SIGNED_IN") await loadFromSupabase(session.user.id);
           } else {
             setUser(null);
           }
         })();
       },
     );
-
     return () => subscription.unsubscribe();
   }, [loadFromSupabase]);
 
-  // REST helpers for syncing to Supabase
   const restUpsert = useCallback(async (table: string, body: Record<string, unknown>, onConflict: string) => {
     const authHeader = getAuthHeader();
     await fetch(`${import.meta.env.VITE_SUPABASE_URL}/rest/v1/${table}?on_conflict=${encodeURIComponent(onConflict)}`, {
       method: "POST",
-      headers: {
-        apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
-        "Content-Type": "application/json",
-        Prefer: "resolution=merge-duplicates",
-        ...authHeader,
-      },
+      headers: { apikey: import.meta.env.VITE_SUPABASE_ANON_KEY, "Content-Type": "application/json", Prefer: "resolution=merge-duplicates", ...authHeader },
       body: JSON.stringify(body),
     });
   }, [getAuthHeader]);
@@ -196,43 +239,30 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const qs = Object.entries(filters).map(([k, v]) => `${k}=eq.${encodeURIComponent(v)}`).join("&");
     await fetch(`${import.meta.env.VITE_SUPABASE_URL}/rest/v1/${table}?${qs}`, {
       method: "DELETE",
-      headers: {
-        apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
-        ...authHeader,
-      },
+      headers: { apikey: import.meta.env.VITE_SUPABASE_ANON_KEY, ...authHeader },
     });
   }, [getAuthHeader]);
 
-  // Store actions
-  const setKeybind = useCallback((key: string, value: string) => {
+  const setKeybindAction = useCallback((key: string, value: string) => {
     setKeybinds((prev) => ({ ...prev, [key]: value }));
     if (user) {
-      if (value) {
-        restUpsert("keybinds", { user_id: user.id, slot_key: key, label: value }, "user_id,slot_key");
-      } else {
-        restDelete("keybinds", { user_id: user.id, slot_key: key });
-      }
+      if (value) restUpsert("keybinds", { user_id: user.id, slot_key: key, label: value }, "user_id,slot_key");
+      else restDelete("keybinds", { user_id: user.id, slot_key: key });
     }
-  }, [setKeybinds, user, restUpsert, restDelete]);
+  }, [user, restUpsert, restDelete]);
 
   const placeSpell = useCallback((classId: string, specId: string, key: string, spellId: string | null) => {
     setAssignments((prev) => {
       const next = { ...prev };
       next[classId] = { ...(next[classId] ?? {}) };
       next[classId][specId] = { ...(next[classId][specId] ?? {}) };
-      if (spellId === null) {
-        delete next[classId][specId][key];
-      } else {
-        next[classId][specId][key] = spellId;
-      }
+      if (spellId === null) delete next[classId][specId][key];
+      else next[classId][specId][key] = spellId;
       return next;
     });
     if (user) {
-      if (spellId) {
-        restUpsert("assignments", { user_id: user.id, class_id: classId, spec_id: specId, slot_key: key, spell_id: spellId }, "user_id,class_id,spec_id,slot_key");
-      } else {
-        restDelete("assignments", { user_id: user.id, class_id: classId, spec_id: specId, slot_key: key });
-      }
+      if (spellId) restUpsert("assignments", { user_id: user.id, class_id: classId, spec_id: specId, slot_key: key, spell_id: spellId }, "user_id,class_id,spec_id,slot_key");
+      else restDelete("assignments", { user_id: user.id, class_id: classId, spec_id: specId, slot_key: key });
     }
   }, [setAssignments, user, restUpsert, restDelete]);
 
@@ -265,16 +295,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (prev.some((p) => p.id === s.id)) return prev;
       return [{ ...s, source: "custom" }, ...prev];
     });
-    if (user) {
-      restUpsert("custom_spells", { user_id: user.id, spell_id: s.id, name: s.name, icon: s.icon, categories: s.categories, wowhead_spell_id: s.spellId ?? null }, "user_id,spell_id");
-    }
+    if (user) restUpsert("custom_spells", { user_id: user.id, spell_id: s.id, name: s.name, icon: s.icon, categories: s.categories, wowhead_spell_id: s.spellId ?? null }, "user_id,spell_id");
   }, [setCustomSpells, user, restUpsert]);
 
   const removeCustomSpell = useCallback((id: string) => {
     setCustomSpells((prev) => prev.filter((s) => s.id !== id));
-    if (user) {
-      restDelete("custom_spells", { user_id: user.id, spell_id: id });
-    }
+    if (user) restDelete("custom_spells", { user_id: user.id, spell_id: id });
   }, [setCustomSpells, user, restDelete]);
 
   const selectClass = useCallback((classId: string, specId?: string) => {
@@ -282,16 +308,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const cls = CLASSES.find((c) => c.id === classId);
     const spec = specId ?? cls?.specs[0]?.id ?? "";
     setSelectedSpecId(spec);
-    if (user) {
-      restUpsert("profiles", { id: user.id, selected_class: classId, selected_spec: spec, updated_at: new Date().toISOString() }, "id");
-    }
+    if (user) restUpsert("profiles", { id: user.id, selected_class: classId, selected_spec: spec, updated_at: new Date().toISOString() }, "id");
   }, [setSelectedClassId, setSelectedSpecId, user, restUpsert]);
 
   const selectSpec = useCallback((specId: string) => {
     setSelectedSpecId(specId);
-    if (user) {
-      restUpsert("profiles", { id: user.id, selected_class: selectedClassId, selected_spec: specId, updated_at: new Date().toISOString() }, "id");
-    }
+    if (user) restUpsert("profiles", { id: user.id, selected_class: selectedClassId, selected_spec: specId, updated_at: new Date().toISOString() }, "id");
   }, [setSelectedSpecId, selectedClassId, user, restUpsert]);
 
   const clearCurrentLayout = useCallback(() => {
@@ -303,12 +325,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
       return next;
     });
-    if (user) {
-      restDelete("assignments", { user_id: user.id, class_id: selectedClassId, spec_id: selectedSpecId });
-    }
+    if (user) restDelete("assignments", { user_id: user.id, class_id: selectedClassId, spec_id: selectedSpecId });
   }, [setAssignments, selectedClassId, selectedSpecId, user, restDelete]);
 
-  // Auth actions
+  // Auth
   const signIn = useCallback(async (email: string, password: string) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     return { error: error?.message ?? null };
@@ -324,26 +344,99 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }, []);
 
+  // Profile management
+  const addProfile = useCallback((name: string) => {
+    const id = `p_${Date.now().toString(36)}`;
+    const newProfile: Profile = {
+      id,
+      name,
+      assignments: {},
+      keybinds: DEFAULT_KEYBINDS,
+      customSpells: [],
+      selectedClassId: "mage",
+      selectedSpecId: "frost",
+      iconOverrides: {},
+    };
+    setProfiles((prev) => [...prev, newProfile]);
+    setActiveProfileId(id);
+  }, [setProfiles, setActiveProfileId]);
+
+  const renameProfile = useCallback((id: string, name: string) => {
+    setProfiles((prev) => prev.map((p) => p.id === id ? { ...p, name } : p));
+  }, [setProfiles]);
+
+  const deleteProfile = useCallback((id: string) => {
+    if (profiles.length <= 1) return;
+    setProfiles((prev) => {
+      const next = prev.filter((p) => p.id !== id);
+      if (activeProfileId === id && next.length > 0) setActiveProfileId(next[0].id);
+      return next;
+    });
+  }, [profiles.length, activeProfileId, setProfiles, setActiveProfileId]);
+
+  const switchProfile = useCallback((id: string) => {
+    setActiveProfileId(id);
+  }, [setActiveProfileId]);
+
+  const exportProfile = useCallback((): string => {
+    const data = {
+      v: 3,
+      a: assignments,
+      k: keybinds,
+      c: customSpells,
+      cl: selectedClassId,
+      sp: selectedSpecId,
+      io: iconOverrides,
+    };
+    return btoa(unescape(encodeURIComponent(JSON.stringify(data))));
+  }, [assignments, keybinds, customSpells, selectedClassId, selectedSpecId, iconOverrides]);
+
+  const importProfile = useCallback((code: string): boolean => {
+    try {
+      const json = decodeURIComponent(escape(atob(code.trim())));
+      const data = JSON.parse(json);
+      if (!data.v || data.v !== 3) return false;
+      setAssignments(data.a ?? {});
+      setKeybinds(data.k ?? DEFAULT_KEYBINDS);
+      setCustomSpells((data.c ?? []).map((s: Record<string, unknown>) => ({ ...s, source: "custom" })));
+      setSelectedClassId(data.cl ?? "mage");
+      setSelectedSpecId(data.sp ?? "frost");
+      setIconOverrides(data.io ?? {});
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  // Icon overrides
+  const setIconOverride = useCallback((spellId: string, icon: string | null) => {
+    setIconOverrides((prev) => {
+      if (icon === null) {
+        const next = { ...prev };
+        delete next[spellId];
+        return next;
+      }
+      return { ...prev, [spellId]: icon };
+    });
+  }, []);
+
   const value = useMemo<State>(() => ({
-    keybinds,
-    setKeybind,
-    assignments,
-    placeSpell,
-    swapSlots,
-    customSpells,
-    addCustomSpell,
-    removeCustomSpell,
-    selectedClassId,
-    selectedSpecId,
-    selectClass,
-    selectSpec,
-    clearCurrentLayout,
-    user,
-    authLoading,
-    signIn,
-    signUp,
-    signOut,
-  }), [keybinds, setKeybind, assignments, placeSpell, swapSlots, customSpells, addCustomSpell, removeCustomSpell, selectedClassId, selectedSpecId, selectClass, selectSpec, clearCurrentLayout, user, authLoading, signIn, signUp, signOut]);
+    keybinds, setKeybind: setKeybindAction, assignments, placeSpell, swapSlots,
+    customSpells, addCustomSpell, removeCustomSpell,
+    selectedClassId, selectedSpecId, selectClass, selectSpec, clearCurrentLayout,
+    user, authLoading, signIn, signUp, signOut,
+    profiles, activeProfileId, addProfile, renameProfile, deleteProfile, switchProfile,
+    exportProfile, importProfile,
+    iconOverrides, setIconOverride,
+  }), [
+    keybinds, setKeybindAction, assignments, placeSpell, swapSlots,
+    customSpells, addCustomSpell, removeCustomSpell,
+    selectedClassId, selectedSpecId, selectClass, selectSpec, clearCurrentLayout,
+    user, authLoading, signIn, signUp, signOut,
+    profiles, activeProfileId, addProfile, renameProfile, deleteProfile, switchProfile,
+    exportProfile, importProfile,
+    iconOverrides, setIconOverride,
+  ]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
@@ -360,11 +453,15 @@ export function resolveSlot(
   key: string,
   assignments: Assignments,
   customSpells: CustomSpell[],
+  iconOverrides?: Record<string, string>,
 ): Spell | null {
   const spellId = assignments[classId]?.[specId]?.[key];
   if (!spellId) return null;
   const classSpells = getClassSpells(classId, specId);
-  return classSpells.find((s) => s.id === spellId)
-    ?? customSpells.find((s) => s.id === spellId)
-    ?? null;
+  const spell = classSpells.find((s) => s.id === spellId) ?? customSpells.find((s) => s.id === spellId) ?? null;
+  if (!spell) return null;
+  if (iconOverrides && iconOverrides[spellId]) {
+    return { ...spell, icon: iconOverrides[spellId] };
+  }
+  return spell;
 }
