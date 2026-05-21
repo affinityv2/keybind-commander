@@ -67,6 +67,7 @@
     background-color: var(--color-background);
     color: var(--color-foreground);
     min-height: 100%;
+    font-family: "Inter", system-ui, -apple-system, sans-serif;
   }
   body {
     background-image:
