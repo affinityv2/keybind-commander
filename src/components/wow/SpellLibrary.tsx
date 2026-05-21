@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { CLASSES, getClassSpells, iconUrl, type Spell } from "@/lib/spells";
+import { CATEGORY_MAP, type CategoryId } from "@/lib/categories";
 import { useStore } from "@/lib/store";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -57,7 +58,13 @@ export function SpellLibrary() {
     const base = tab === "class" ? classSpells : tab === "all" ? allSpells : customList;
     const q = query.trim().toLowerCase();
     if (!q) return base;
-    return base.filter((s) => s.name.toLowerCase().includes(q) || s.source.toLowerCase().includes(q));
+    return base.filter((s) => {
+      if (s.name.toLowerCase().includes(q) || s.source.toLowerCase().includes(q)) return true;
+      return s.categories.some((c) => {
+        const cat = CATEGORY_MAP[c as CategoryId];
+        return cat && (cat.name.toLowerCase().includes(q) || c.toLowerCase().includes(q));
+      });
+    });
   }, [tab, classSpells, allSpells, customList, query]);
 
   return (
@@ -125,7 +132,14 @@ function LibraryItem({ spell, onRemove }: { spell: LibrarySpell; onRemove?: () =
       />
       <div className="min-w-0 flex-1">
         <div className="truncate text-xs font-semibold">{spell.name}</div>
-        <div className="truncate text-[10px]" style={{ color: spell.sourceColor }}>{spell.source}</div>
+        <div className="flex items-center gap-1">
+          <span className="truncate text-[10px]" style={{ color: spell.sourceColor }}>{spell.source}</span>
+          {spell.categories[0] && CATEGORY_MAP[spell.categories[0] as CategoryId] && (
+            <span className="shrink-0 rounded px-1 text-[8px] font-medium" style={{ color: CATEGORY_MAP[spell.categories[0] as CategoryId].color, backgroundColor: CATEGORY_MAP[spell.categories[0] as CategoryId].color + "18" }}>
+              {CATEGORY_MAP[spell.categories[0] as CategoryId].name}
+            </span>
+          )}
+        </div>
       </div>
       {onRemove && (
         <Button

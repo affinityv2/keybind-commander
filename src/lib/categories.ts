@@ -10,21 +10,27 @@ export type CategoryId =
   | "self_heal"
   | "cc"
   | "dispel"
-  | "utility_1"
-  | "utility_2"
+  | "purge"
+  | "gap_closer"
   | "aoe_dmg"
   | "execute"
-  | "gap_closer"
-  | "purge"
-  | "totem_trinket"
-  | "raid_cd";
+  | "raid_cd"
+  | "builder"
+  | "spender"
+  | "dot"
+  | "pvp_offensive"
+  | "pvp_defensive"
+  | "pvp_utility"
+  | "utility_1"
+  | "utility_2"
+  | "totem_trinket";
 
 export interface Category {
   id: CategoryId;
   name: string;
   description: string;
   defaultKeybind: string;
-  color: string; // for slot accent
+  color: string;
 }
 
 export const CATEGORIES: Category[] = [
@@ -43,6 +49,12 @@ export const CATEGORIES: Category[] = [
   { id: "raid_cd",       name: "Raid CD",          description: "Group damage reduction / heal", defaultKeybind: "5",       color: "#34d399" },
   { id: "dispel",        name: "Dispel",           description: "Remove magic / disease",        defaultKeybind: "V",       color: "#60a5fa" },
   { id: "purge",         name: "Purge",            description: "Strip enemy buff",              defaultKeybind: "Z",       color: "#22d3ee" },
+  { id: "builder",       name: "Builder",          description: "Resource generator / filler",   defaultKeybind: "6",       color: "#94a3b8" },
+  { id: "spender",       name: "Spender",          description: "Resource consumer / finisher",  defaultKeybind: "7",       color: "#f59e0b" },
+  { id: "dot",           name: "DoT",              description: "Damage over time effect",       defaultKeybind: "8",       color: "#a3e635" },
+  { id: "pvp_offensive", name: "PvP Offensive",   description: "PvP talent damage ability",     defaultKeybind: "Shift+4", color: "#e11d48" },
+  { id: "pvp_defensive", name: "PvP Defensive",    description: "PvP talent defensive ability",  defaultKeybind: "Shift+5", color: "#0ea5e9" },
+  { id: "pvp_utility",   name: "PvP Utility",      description: "PvP talent utility / CC",       defaultKeybind: "Shift+6", color: "#8b5cf6" },
   { id: "utility_1",     name: "Utility I",        description: "Class utility slot",            defaultKeybind: "Shift+1", color: "#94a3b8" },
   { id: "utility_2",     name: "Utility II",       description: "Class utility slot",            defaultKeybind: "Shift+2", color: "#94a3b8" },
   { id: "totem_trinket", name: "Trinket / Totem",  description: "On-use trinket or totem",       defaultKeybind: "Shift+3", color: "#fcd34d" },
