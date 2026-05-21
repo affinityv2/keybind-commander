@@ -1,8 +1,8 @@
 import { createContext, useContext, useMemo, useCallback, useState, useEffect, type ReactNode } from "react";
 import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { CLASSES, getClassSpells, type Spell } from "./spells";
-import { supabase } from "./supabase";
-import type { User, Session } from "@supabase/supabase-js";
+import { supabase, type User, type Session } from "./supabase";
+import type { CategoryId } from "./categories";
 
 export const ROWS = 2;
 export const COLS = 18;
@@ -39,7 +39,6 @@ interface State {
   selectClass: (classId: string, specId?: string) => void;
   selectSpec: (specId: string) => void;
   clearCurrentLayout: () => void;
-  // Auth
   user: User | null;
   authLoading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
@@ -50,83 +49,104 @@ interface State {
 const Ctx = createContext<State | null>(null);
 
 export function StoreProvider({ children }: { children: ReactNode }) {
-  // Local state (used as cache, synced to Supabase when logged in)
   const [keybinds, setKeybinds] = useLocalStorage<Record<string, string>>("wowkb:v2:keybinds", DEFAULT_KEYBINDS);
   const [assignments, setAssignments] = useLocalStorage<Assignments>("wowkb:v2:assignments", {});
   const [customSpells, setCustomSpells] = useLocalStorage<CustomSpell[]>("wowkb:v2:custom", []);
   const [selectedClassId, setSelectedClassId] = useLocalStorage<string>("wowkb:v2:class", "mage");
   const [selectedSpecId, setSelectedSpecId] = useLocalStorage<string>("wowkb:v2:spec", "frost");
 
-  // Auth state
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
+
+  // Helper: get auth header for Supabase REST calls
+  const getAuthHeader = useCallback((): Record<string, string> => {
+    // Access the session from the supabase module's internal state
+    // We store the token in localStorage, so read it from there
+    try {
+      const raw = localStorage.getItem("sb-auth-session");
+      if (raw) {
+        const session = JSON.parse(raw);
+        if (session?.access_token) {
+          return { Authorization: `Bearer ${session.access_token}` };
+        }
+      }
+    } catch { /* ignore */ }
+    return {};
+  }, []);
 
   // Load data from Supabase for the current user
   const loadFromSupabase = useCallback(async (userId: string) => {
     try {
-      // Load profile
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("selected_class, selected_spec")
-        .eq("id", userId)
-        .maybeSingle();
+      const authHeader = getAuthHeader();
 
-      if (profile) {
-        setSelectedClassId(profile.selected_class);
-        setSelectedSpecId(profile.selected_spec);
+      // Load profile
+      const profileRes = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/profiles?select=selected_class,selected_spec&id=eq.${userId}&limit=1`,
+        { headers: { apikey: import.meta.env.VITE_SUPABASE_ANON_KEY, ...authHeader } },
+      );
+      if (profileRes.ok) {
+        const profileData = await profileRes.json();
+        if (profileData?.[0]) {
+          setSelectedClassId(profileData[0].selected_class);
+          setSelectedSpecId(profileData[0].selected_spec);
+        }
       }
 
       // Load keybinds
-      const { data: kbRows } = await supabase
-        .from("keybinds")
-        .select("slot_key, label")
-        .eq("user_id", userId);
-
-      if (kbRows && kbRows.length > 0) {
-        const kbMap: Record<string, string> = {};
-        for (const r of kbRows) {
-          kbMap[r.slot_key] = r.label;
+      const kbRes = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/keybinds?select=slot_key,label&user_id=eq.${userId}`,
+        { headers: { apikey: import.meta.env.VITE_SUPABASE_ANON_KEY, ...authHeader } },
+      );
+      if (kbRes.ok) {
+        const kbRows = await kbRes.json();
+        if (kbRows?.length > 0) {
+          const kbMap: Record<string, string> = {};
+          for (const r of kbRows) kbMap[r.slot_key] = r.label;
+          setKeybinds(kbMap);
         }
-        setKeybinds(kbMap);
       }
 
       // Load assignments
-      const { data: assignRows } = await supabase
-        .from("assignments")
-        .select("class_id, spec_id, slot_key, spell_id")
-        .eq("user_id", userId);
-
-      if (assignRows && assignRows.length > 0) {
-        const aMap: Assignments = {};
-        for (const r of assignRows) {
-          if (!aMap[r.class_id]) aMap[r.class_id] = {};
-          if (!aMap[r.class_id][r.spec_id]) aMap[r.class_id][r.spec_id] = {};
-          aMap[r.class_id][r.spec_id][r.slot_key] = r.spell_id;
+      const aRes = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/assignments?select=class_id,spec_id,slot_key,spell_id&user_id=eq.${userId}`,
+        { headers: { apikey: import.meta.env.VITE_SUPABASE_ANON_KEY, ...authHeader } },
+      );
+      if (aRes.ok) {
+        const aRows = await aRes.json();
+        if (aRows?.length > 0) {
+          const aMap: Assignments = {};
+          for (const r of aRows) {
+            if (!aMap[r.class_id]) aMap[r.class_id] = {};
+            if (!aMap[r.class_id][r.spec_id]) aMap[r.class_id][r.spec_id] = {};
+            aMap[r.class_id][r.spec_id][r.slot_key] = r.spell_id;
+          }
+          setAssignments(aMap);
         }
-        setAssignments(aMap);
       }
 
       // Load custom spells
-      const { data: csRows } = await supabase
-        .from("custom_spells")
-        .select("spell_id, name, icon, categories, wowhead_spell_id")
-        .eq("user_id", userId);
-
-      if (csRows && csRows.length > 0) {
-        const csList: CustomSpell[] = csRows.map((r) => ({
-          id: r.spell_id,
-          name: r.name,
-          icon: r.icon,
-          categories: Array.isArray(r.categories) ? r.categories : [],
-          source: "custom" as const,
-          spellId: r.wowhead_spell_id ?? undefined,
-        }));
-        setCustomSpells(csList);
+      const csRes = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/custom_spells?select=spell_id,name,icon,categories,wowhead_spell_id&user_id=eq.${userId}`,
+        { headers: { apikey: import.meta.env.VITE_SUPABASE_ANON_KEY, ...authHeader } },
+      );
+      if (csRes.ok) {
+        const csRows = await csRes.json();
+        if (csRows?.length > 0) {
+          const csList: CustomSpell[] = csRows.map((r: Record<string, unknown>) => ({
+            id: r.spell_id as string,
+            name: r.name as string,
+            icon: r.icon as string,
+            categories: Array.isArray(r.categories) ? r.categories as CategoryId[] : [],
+            source: "custom" as const,
+            spellId: (r.wowhead_spell_id as number) ?? undefined,
+          }));
+          setCustomSpells(csList);
+        }
       }
     } catch {
       // Silently fall back to localStorage data
     }
-  }, [setKeybinds, setAssignments, setCustomSpells, setSelectedClassId, setSelectedSpecId]);
+  }, [setKeybinds, setAssignments, setCustomSpells, setSelectedClassId, setSelectedSpecId, getAuthHeader]);
 
   // Auth state listener
   useEffect(() => {
@@ -150,82 +170,50 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             setUser(null);
           }
         })();
-      }
+      },
     );
 
     return () => subscription.unsubscribe();
   }, [loadFromSupabase]);
 
-  // Sync helpers — persist to Supabase when logged in
-  const syncKeybind = useCallback(async (userId: string, slotKey: string, label: string) => {
-    await supabase.from("keybinds").upsert(
-      { user_id: userId, slot_key: slotKey, label },
-      { onConflict: "user_id,slot_key" },
-    );
-  }, []);
-
-  const syncDeleteKeybind = useCallback(async (userId: string, slotKey: string) => {
-    await supabase.from("keybinds")
-      .delete()
-      .eq("user_id", userId)
-      .eq("slot_key", slotKey);
-  }, []);
-
-  const syncAssignment = useCallback(async (userId: string, classId: string, specId: string, slotKey: string, spellId: string) => {
-    await supabase.from("assignments").upsert(
-      { user_id: userId, class_id: classId, spec_id: specId, slot_key: slotKey, spell_id: spellId },
-      { onConflict: "user_id,class_id,spec_id,slot_key" },
-    );
-  }, []);
-
-  const syncDeleteAssignment = useCallback(async (userId: string, classId: string, specId: string, slotKey: string) => {
-    await supabase.from("assignments")
-      .delete()
-      .eq("user_id", userId)
-      .eq("class_id", classId)
-      .eq("spec_id", specId)
-      .eq("slot_key", slotKey);
-  }, []);
-
-  const syncCustomSpell = useCallback(async (userId: string, s: Omit<CustomSpell, "source">) => {
-    await supabase.from("custom_spells").upsert(
-      {
-        user_id: userId,
-        spell_id: s.id,
-        name: s.name,
-        icon: s.icon,
-        categories: s.categories,
-        wowhead_spell_id: s.spellId ?? null,
+  // REST helpers for syncing to Supabase
+  const restUpsert = useCallback(async (table: string, body: Record<string, unknown>, onConflict: string) => {
+    const authHeader = getAuthHeader();
+    await fetch(`${import.meta.env.VITE_SUPABASE_URL}/rest/v1/${table}?on_conflict=${encodeURIComponent(onConflict)}`, {
+      method: "POST",
+      headers: {
+        apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+        "Content-Type": "application/json",
+        Prefer: "resolution=merge-duplicates",
+        ...authHeader,
       },
-      { onConflict: "user_id,spell_id" },
-    );
-  }, []);
+      body: JSON.stringify(body),
+    });
+  }, [getAuthHeader]);
 
-  const syncDeleteCustomSpell = useCallback(async (userId: string, spellId: string) => {
-    await supabase.from("custom_spells")
-      .delete()
-      .eq("user_id", userId)
-      .eq("spell_id", spellId);
-  }, []);
-
-  const syncProfile = useCallback(async (userId: string, selectedClass: string, selectedSpec: string) => {
-    await supabase.from("profiles").upsert(
-      { id: userId, selected_class: selectedClass, selected_spec: selectedSpec, updated_at: new Date().toISOString() },
-      { onConflict: "id" },
-    );
-  }, []);
+  const restDelete = useCallback(async (table: string, filters: Record<string, string>) => {
+    const authHeader = getAuthHeader();
+    const qs = Object.entries(filters).map(([k, v]) => `${k}=eq.${encodeURIComponent(v)}`).join("&");
+    await fetch(`${import.meta.env.VITE_SUPABASE_URL}/rest/v1/${table}?${qs}`, {
+      method: "DELETE",
+      headers: {
+        apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+        ...authHeader,
+      },
+    });
+  }, [getAuthHeader]);
 
   // Store actions
   const setKeybind = useCallback((key: string, value: string) => {
     setKeybinds((prev) => ({ ...prev, [key]: value }));
     if (user) {
       if (value) {
-        syncKeybind(user.id, key, value);
+        restUpsert("keybinds", { user_id: user.id, slot_key: key, label: value }, "user_id,slot_key");
       } else {
-        syncDeleteKeybind(user.id, key);
+        restDelete("keybinds", { user_id: user.id, slot_key: key });
       }
     }
-  }, [setKeybinds, user, syncKeybind, syncDeleteKeybind]);
+  }, [setKeybinds, user, restUpsert, restDelete]);
 
   const placeSpell = useCallback((classId: string, specId: string, key: string, spellId: string | null) => {
     setAssignments((prev) => {
@@ -241,12 +229,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     });
     if (user) {
       if (spellId) {
-        syncAssignment(user.id, classId, specId, key, spellId);
+        restUpsert("assignments", { user_id: user.id, class_id: classId, spec_id: specId, slot_key: key, spell_id: spellId }, "user_id,class_id,spec_id,slot_key");
       } else {
-        syncDeleteAssignment(user.id, classId, specId, key);
+        restDelete("assignments", { user_id: user.id, class_id: classId, spec_id: specId, slot_key: key });
       }
     }
-  }, [setAssignments, user, syncAssignment, syncDeleteAssignment]);
+  }, [setAssignments, user, restUpsert, restDelete]);
 
   const swapSlots = useCallback((classId: string, specId: string, fromKey: string, toKey: string) => {
     if (fromKey === toKey) return;
@@ -262,16 +250,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       return next;
     });
     if (user) {
-      // Read current state to sync properly — fire and forget
       const cur = assignments[classId]?.[specId] ?? {};
       const a = cur[fromKey];
       const b = cur[toKey];
-      if (b) syncAssignment(user.id, classId, specId, fromKey, b);
-      else syncDeleteAssignment(user.id, classId, specId, fromKey);
-      if (a) syncAssignment(user.id, classId, specId, toKey, a);
-      else syncDeleteAssignment(user.id, classId, specId, toKey);
+      if (b) restUpsert("assignments", { user_id: user.id, class_id: classId, spec_id: specId, slot_key: fromKey, spell_id: b }, "user_id,class_id,spec_id,slot_key");
+      else restDelete("assignments", { user_id: user.id, class_id: classId, spec_id: specId, slot_key: fromKey });
+      if (a) restUpsert("assignments", { user_id: user.id, class_id: classId, spec_id: specId, slot_key: toKey, spell_id: a }, "user_id,class_id,spec_id,slot_key");
+      else restDelete("assignments", { user_id: user.id, class_id: classId, spec_id: specId, slot_key: toKey });
     }
-  }, [setAssignments, assignments, user, syncAssignment, syncDeleteAssignment]);
+  }, [setAssignments, assignments, user, restUpsert, restDelete]);
 
   const addCustomSpell = useCallback((s: Omit<CustomSpell, "source">) => {
     setCustomSpells((prev) => {
@@ -279,16 +266,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       return [{ ...s, source: "custom" }, ...prev];
     });
     if (user) {
-      syncCustomSpell(user.id, s);
+      restUpsert("custom_spells", { user_id: user.id, spell_id: s.id, name: s.name, icon: s.icon, categories: s.categories, wowhead_spell_id: s.spellId ?? null }, "user_id,spell_id");
     }
-  }, [setCustomSpells, user, syncCustomSpell]);
+  }, [setCustomSpells, user, restUpsert]);
 
   const removeCustomSpell = useCallback((id: string) => {
     setCustomSpells((prev) => prev.filter((s) => s.id !== id));
     if (user) {
-      syncDeleteCustomSpell(user.id, id);
+      restDelete("custom_spells", { user_id: user.id, spell_id: id });
     }
-  }, [setCustomSpells, user, syncDeleteCustomSpell]);
+  }, [setCustomSpells, user, restDelete]);
 
   const selectClass = useCallback((classId: string, specId?: string) => {
     setSelectedClassId(classId);
@@ -296,16 +283,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const spec = specId ?? cls?.specs[0]?.id ?? "";
     setSelectedSpecId(spec);
     if (user) {
-      syncProfile(user.id, classId, spec);
+      restUpsert("profiles", { id: user.id, selected_class: classId, selected_spec: spec, updated_at: new Date().toISOString() }, "id");
     }
-  }, [setSelectedClassId, setSelectedSpecId, user, syncProfile]);
+  }, [setSelectedClassId, setSelectedSpecId, user, restUpsert]);
 
   const selectSpec = useCallback((specId: string) => {
     setSelectedSpecId(specId);
     if (user) {
-      syncProfile(user.id, selectedClassId, specId);
+      restUpsert("profiles", { id: user.id, selected_class: selectedClassId, selected_spec: specId, updated_at: new Date().toISOString() }, "id");
     }
-  }, [setSelectedSpecId, selectedClassId, user, syncProfile]);
+  }, [setSelectedSpecId, selectedClassId, user, restUpsert]);
 
   const clearCurrentLayout = useCallback(() => {
     setAssignments((prev) => {
@@ -317,13 +304,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       return next;
     });
     if (user) {
-      supabase.from("assignments")
-        .delete()
-        .eq("user_id", user.id)
-        .eq("class_id", selectedClassId)
-        .eq("spec_id", selectedSpecId);
+      restDelete("assignments", { user_id: user.id, class_id: selectedClassId, spec_id: selectedSpecId });
     }
-  }, [setAssignments, selectedClassId, selectedSpecId, user]);
+  }, [setAssignments, selectedClassId, selectedSpecId, user, restDelete]);
 
   // Auth actions
   const signIn = useCallback(async (email: string, password: string) => {
