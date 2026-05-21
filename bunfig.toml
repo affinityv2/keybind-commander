@@ -8,4 +8,5 @@ minimumReleaseAgeExcludes = [
   "@lovable.dev/vite-plugin-dev-server-bridge",
   "@lovable.dev/vite-plugin-hmr-gate",
   "lovable-tagger",
+  "@supabase/supabase-js",
 ]
