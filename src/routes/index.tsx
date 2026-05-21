@@ -1,8 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { StoreProvider } from "@/lib/store";
-import { ActionBar } from "@/components/wow/ActionBar";
+import { ActionBars } from "@/components/wow/ActionBars";
 import { ClassPicker } from "@/components/wow/ClassPicker";
-import { CategoryLegend } from "@/components/wow/CategoryLegend";
+import { SpellLibrary } from "@/components/wow/SpellLibrary";
 
 export const Route = createFileRoute("/")({
   component: Index,
@@ -13,11 +13,11 @@ function Index() {
     <StoreProvider>
       <div className="min-h-screen">
         <header className="border-b border-[var(--gold-dim)]/40 bg-black/40 px-6 py-4 backdrop-blur">
-          <div className="mx-auto flex max-w-7xl items-center justify-between">
+          <div className="mx-auto flex max-w-[1600px] items-center justify-between">
             <div>
               <h1 className="wow-heading text-3xl">Azeroth Keybinds</h1>
               <p className="text-xs text-muted-foreground">
-                Tema-baseret keybind planner \u2014 samme rolle, samme knap, p\u00e5 tv\u00e6rs af alle classes
+                Drag-and-drop keybind planner \u2014 2 bars \u00d7 18 slots, per class/spec
               </p>
             </div>
             <a
@@ -31,13 +31,20 @@ function Index() {
           </div>
         </header>
 
-        <main className="mx-auto max-w-7xl space-y-6 p-6">
-          <ClassPicker />
-          <ActionBar />
-          <CategoryLegend />
+        <main className="mx-auto max-w-[1600px] p-6">
+          <div className="mb-6">
+            <ClassPicker />
+          </div>
 
-          <footer className="pt-4 text-center text-xs text-muted-foreground">
-            Setup gemmes automatisk lokalt i din browser. World of Warcraft og alle spell-navne er trademarks of Blizzard Entertainment.
+          <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
+            <ActionBars />
+            <div className="h-[720px]">
+              <SpellLibrary />
+            </div>
+          </div>
+
+          <footer className="pt-6 text-center text-xs text-muted-foreground">
+            Setup gemmes lokalt i din browser. World of Warcraft og spell-navne er trademarks of Blizzard Entertainment.
           </footer>
         </main>
       </div>
